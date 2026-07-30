@@ -1,1 +1,2 @@
 olefile==0.44
+pycryptodome>=3.20,<4
