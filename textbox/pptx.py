@@ -10,54 +10,59 @@ with without_local_module_shadowing(__file__):
 
 try:
     from ._layout import render_grid
+    from .source import as_source
 except ImportError:
     from _layout import render_grid
+    from source import as_source
 
 
 class PPTXExtractor(object):
-    def __init__(self, filename, include_notes=True, include_charts=True):
-        self.filename = filename
+    def __init__(self, filename, include_notes=True, include_charts=True, name=None):
+        self.source = as_source(filename, name)
+        self.filename = self.source.name
         self.include_notes = include_notes
         self.include_charts = include_charts
         self.slides = self._extract()
         self.text = self._render()
+        self.provenance = self.source.provenance("pptx")
 
     def get_text(self):
         return self.text
 
     def get_structure(self):
-        return {"type": "pptx", "slides": self.slides}
+        return {"type": "pptx", "provenance": self.provenance, "slides": self.slides}
 
     def get_slides(self):
         return self.slides
 
     def _extract(self):
-        presentation = Presentation(self.filename)
-        slides = []
-        for slide_index, slide in enumerate(presentation.slides, 1):
-            self._slide_list_counters = {}
-            blocks = self._shape_blocks(slide.shapes)
-            blocks.sort(
-                key=lambda block: (
-                    block.get("top", 0),
-                    block.get("left", 0),
-                    block.get("zOrder", 0),
+        with self.source.open() as stream:
+            presentation = Presentation(stream)
+            slides = []
+            for slide_index, slide in enumerate(presentation.slides, 1):
+                self._slide_list_counters = {}
+                blocks = self._shape_blocks(slide.shapes)
+                blocks.sort(
+                    key=lambda block: (
+                        block.get("top", 0),
+                        block.get("left", 0),
+                        block.get("zOrder", 0),
+                    )
                 )
-            )
-            notes = ""
-            if self.include_notes and slide.has_notes_slide:
-                frame = slide.notes_slide.notes_text_frame
-                if frame is not None:
-                    notes = frame.text.strip()
-            slides.append(
-                {
-                    "number": slide_index,
-                    "name": slide.name,
-                    "blocks": blocks,
-                    "notes": notes,
-                }
-            )
-        return slides
+                notes = ""
+                if self.include_notes and slide.has_notes_slide:
+                    frame = slide.notes_slide.notes_text_frame
+                    if frame is not None:
+                        notes = frame.text.strip()
+                slides.append(
+                    {
+                        "number": slide_index,
+                        "name": slide.name,
+                        "blocks": blocks,
+                        "notes": notes,
+                    }
+                )
+            return slides
 
     def _shape_blocks(self, shapes, parent_offset=(0, 0)):
         blocks = []

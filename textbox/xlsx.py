@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 
 try:
@@ -11,48 +12,53 @@ with without_local_module_shadowing(__file__):
 
 try:
     from ._layout import render_grid
+    from .source import as_source
 except ImportError:
     from _layout import render_grid
+    from source import as_source
 
 
 class XLSXExtractor(object):
-    def __init__(self, filename, include_hidden=False, formulas=False):
-        self.filename = filename
+    def __init__(self, filename, include_hidden=False, formulas=False, name=None):
+        self.source = as_source(filename, name)
+        self.filename = self.source.name
         self.include_hidden = include_hidden
         self.formulas = formulas
         self.sheets = self._extract()
         self.text = self._render()
+        self.provenance = self.source.provenance("xlsx")
 
     def get_text(self):
         return self.text
 
     def get_structure(self):
-        return {"type": "xlsx", "sheets": self.sheets}
+        return {"type": "xlsx", "provenance": self.provenance, "sheets": self.sheets}
 
     def get_sheets(self):
         return self.sheets
 
     def _extract(self):
-        values_book = load_workbook(
-            self.filename, data_only=not self.formulas, read_only=False
-        )
-        formula_book = (
-            load_workbook(self.filename, data_only=False, read_only=False)
-            if not self.formulas
-            else values_book
-        )
-        sheets = []
-        try:
+        with contextlib.ExitStack() as stack:
+            values_stream = stack.enter_context(self.source.open())
+            values_book = load_workbook(
+                values_stream, data_only=not self.formulas, read_only=False
+            )
+            stack.callback(values_book.close)
+            if self.formulas:
+                formula_book = values_book
+            else:
+                formula_stream = stack.enter_context(self.source.open())
+                formula_book = load_workbook(
+                    formula_stream, data_only=False, read_only=False
+                )
+                stack.callback(formula_book.close)
+            sheets = []
             for worksheet in values_book.worksheets:
                 if worksheet.sheet_state != "visible" and not self.include_hidden:
                     continue
                 formula_sheet = formula_book[worksheet.title]
                 sheets.append(self._extract_sheet(worksheet, formula_sheet))
-        finally:
-            values_book.close()
-            if formula_book is not values_book:
-                formula_book.close()
-        return sheets
+            return sheets
 
     def _extract_sheet(self, worksheet, formula_sheet):
         populated = [

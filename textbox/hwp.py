@@ -1,9 +1,15 @@
+import io
 import struct
 import unicodedata
 import zlib
 from collections import deque
 
 import olefile
+
+try:
+    from .source import as_source
+except ImportError:
+    from source import as_source
 
 try:
     from Crypto.Cipher import AES
@@ -20,8 +26,10 @@ class HWPExtractor(object):
     HWP_TEXT_TAGS = [67]
     DISTRIBUTE_DOC_DATA_TAG = 28
 
-    def __init__(self, filename):
-        self._ole = self.load(filename)
+    def __init__(self, filename, name=None):
+        self.source = as_source(filename, name)
+        self.filename = self.source.name
+        self._ole = self.load(self.source)
         self._dirs = self._ole.listdir()
 
         if not self.is_valid(self._dirs):
@@ -47,9 +55,10 @@ class HWPExtractor(object):
         self.tables = []
         self._load_doc_info()
         self.text = self._get_text()
+        self.provenance = self.source.provenance("hwp")
 
     def load(self, filename):
-        return olefile.OleFileIO(filename)
+        return olefile.OleFileIO(io.BytesIO(filename.read_bytes()))
 
     def is_valid(self, dirs):
         return (
@@ -79,6 +88,14 @@ class HWPExtractor(object):
 
     def get_text(self):
         return self.text
+
+    def get_structure(self):
+        return {
+            "type": "hwp",
+            "provenance": self.provenance,
+            "tables": self.tables,
+            "text": self.text,
+        }
 
     def _get_text(self):
         text = ""

@@ -10,43 +10,53 @@ with without_local_module_shadowing(__file__):
 
 try:
     from ._layout import render_grid
+    from .source import as_source
 except ImportError:
     from _layout import render_grid
+    from source import as_source
 
 
 class DOCXExtractor(object):
-    def __init__(self, filename, include_headers=True):
-        self.filename = filename
+    def __init__(self, filename, include_headers=True, name=None):
+        self.source = as_source(filename, name)
+        self.filename = self.source.name
         self.include_headers = include_headers
         self._list_counters = {}
         self.blocks = []
         self.tables = []
         self._extract()
         self.text = self._render()
+        self.provenance = self.source.provenance("docx")
 
     def get_text(self):
         return self.text
 
     def get_structure(self):
-        return {"type": "docx", "blocks": self.blocks, "tables": self.tables}
+        return {
+            "type": "docx",
+            "provenance": self.provenance,
+            "blocks": self.blocks,
+            "tables": self.tables,
+        }
 
     def get_tables(self):
         return self.tables
 
     def _extract(self):
-        document = Document(self.filename)
-        for item in document.iter_inner_content():
-            if isinstance(item, Paragraph):
-                block = self._paragraph_block(item)
-                if block["text"] or block["kind"] != "paragraph":
-                    self.blocks.append(block)
-            elif isinstance(item, Table):
-                table = self._table_data(item)
-                self.tables.append(table)
-                self.blocks.append({"kind": "table", "table": table})
+        with self.source.open() as stream:
+            document = Document(stream)
+            for item in document.iter_inner_content():
+                if isinstance(item, Paragraph):
+                    block = self._paragraph_block(item)
+                    if block["text"] or block["kind"] != "paragraph":
+                        self.blocks.append(block)
+                elif isinstance(item, Table):
+                    table = self._table_data(item)
+                    self.tables.append(table)
+                    self.blocks.append({"kind": "table", "table": table})
 
-        if self.include_headers:
-            self._extract_headers_and_footers(document)
+            if self.include_headers:
+                self._extract_headers_and_footers(document)
 
     def _paragraph_block(self, paragraph):
         text = paragraph.text
